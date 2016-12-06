@@ -967,6 +967,7 @@ public class JobImpl implements org.apache.hadoop.mapreduce.v2.app.job.Job,
     }
   }
 
+
   protected void scheduleTasks(Set<TaskId> taskIDs,
       boolean recoverTaskOutput) {
     for (TaskId taskID : taskIDs) {
@@ -1431,7 +1432,13 @@ public class JobImpl implements org.apache.hadoop.mapreduce.v2.app.job.Job,
 
         TaskSplitMetaInfo[] taskSplitMetaInfo = createSplits(job, job.jobId);
         job.numMapTasks = taskSplitMetaInfo.length;
-        job.numReduceTasks = job.conf.getInt(MRJobConfig.NUM_REDUCES, 0);
+        //job.numReduceTasks = job.conf.getInt(MRJobConfig.NUM_REDUCES, 0);
+        job.numReduceTasks = job.conf.getNumReduceActualTasks();    //<<<<==when enable gyf.reduce.solution,
+                                                                    //job.numReduceTasks = actualNumReduce
+                                                                    //if not then set job.numReduceTasks = partition_Num
+                                                                    // that is, every reducer only process one
+                                                                    // partition in this case.
+        //job.conf.setNumReduceActualTasks(job.numReduceTasks);
 
         if (job.numMapTasks == 0 && job.numReduceTasks == 0) {
           job.addDiagnostic("No of maps and reduces are 0 " + job.jobId);
@@ -1485,7 +1492,10 @@ public class JobImpl implements org.apache.hadoop.mapreduce.v2.app.job.Job,
     protected void setup(JobImpl job) throws IOException {
 
       String oldJobIDString = job.oldJobId.toString();
-      String user = 
+
+      LOG.info("[aabbccdd] oldJobIDString: "+ oldJobIDString);
+
+      String user =
         UserGroupInformation.getCurrentUser().getShortUserName();
       Path path = MRApps.getStagingAreaDir(job.conf, user);
       if(LOG.isDebugEnabled()) {
@@ -1544,7 +1554,7 @@ public class JobImpl implements org.apache.hadoop.mapreduce.v2.app.job.Job,
       for (int i = 0; i < job.numReduceTasks; i++) {
         TaskImpl task =
             new ReduceTaskImpl(job.jobId, i,
-                job.eventHandler, 
+                job.eventHandler,
                 job.remoteJobConfFile, 
                 job.conf, job.numMapTasks, 
                 job.taskAttemptListener, job.jobToken,

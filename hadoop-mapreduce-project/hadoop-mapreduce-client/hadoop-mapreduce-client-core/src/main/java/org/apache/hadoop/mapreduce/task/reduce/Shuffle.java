@@ -20,6 +20,8 @@ package org.apache.hadoop.mapreduce.task.reduce;
 import java.io.IOException;
 import java.util.Map;
 
+import org.apache.commons.logging.Log;
+import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.classification.InterfaceAudience;
 import org.apache.hadoop.classification.InterfaceStability;
 import org.apache.hadoop.mapred.JobConf;
@@ -44,6 +46,8 @@ public class Shuffle<K, V> implements ShuffleConsumerPlugin<K, V>, ExceptionRepo
   private static final int MAX_RPC_OUTSTANDING_EVENTS = 3000000;
   
   private ShuffleConsumerPlugin.Context context;
+
+  private static final Log LOG = LogFactory.getLog(Shuffle.class);
 
   private TaskAttemptID reduceId;
   private JobConf jobConf;
@@ -110,6 +114,7 @@ public class Shuffle<K, V> implements ShuffleConsumerPlugin<K, V>, ExceptionRepo
     boolean isLocal = localMapFiles != null;
     final int numFetchers = isLocal ? 1 :
       jobConf.getInt(MRJobConfig.SHUFFLE_PARALLEL_COPIES, 5);
+    LOG.info("numFetchers are: "+ numFetchers);
     Fetcher<K,V>[] fetchers = new Fetcher[numFetchers];
     if (isLocal) {
       fetchers[0] = new LocalFetcher<K, V>(jobConf, reduceId, scheduler,

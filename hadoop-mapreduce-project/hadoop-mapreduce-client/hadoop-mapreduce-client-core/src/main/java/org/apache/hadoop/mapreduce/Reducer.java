@@ -20,6 +20,8 @@ package org.apache.hadoop.mapreduce;
 
 import java.io.IOException;
 
+import org.apache.commons.logging.Log;
+import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.classification.InterfaceAudience;
 import org.apache.hadoop.classification.InterfaceStability;
 import org.apache.hadoop.conf.Configuration;
@@ -129,15 +131,30 @@ public class Reducer<KEYIN,VALUEIN,KEYOUT,VALUEOUT> {
   public abstract class Context 
     implements ReduceContext<KEYIN,VALUEIN,KEYOUT,VALUEOUT> {
   }
-
+  private Configuration conf = new Configuration();
+  private int keyCount;
+  private static final Log LOG = LogFactory.getLog(Reducer.class.getName());
+  private boolean isContention;
+    private int reduceID;
+    private int sleep_ms;
+    private boolean enable_contention;
+    private int key_increment;
   /**
    * Called once at the start of the task.
    */
   protected void setup(Context context
                        ) throws IOException, InterruptedException {
     // NOTHING
+      enable_contention = conf.getBoolean("gyf.reduce.contention.enable",false);
+      LOG.info("gyf.reduce.contention.enable:" +(enable_contention?"true":"false"));
+      sleep_ms = conf.getInt("gyf.reduce.contention.sleep_ms",10);
+      key_increment = keyCount;
   }
 
+  public void setKeyCount(int k){keyCount = k;}
+  public void setReducerID(int r) {reduceID = r;}
+    public void setContention(boolean contention){isContention = contention;}
+    public int getKeyCount(){return keyCount;}
   /**
    * This method is called once for each key. Most applications will define
    * their reduce class by overriding this method. The default implementation
@@ -157,6 +174,8 @@ public class Reducer<KEYIN,VALUEIN,KEYOUT,VALUEOUT> {
   protected void cleanup(Context context
                          ) throws IOException, InterruptedException {
     // NOTHING
+    //LOG.info("[gyf.reducer.keyCount] "+keyCount);
+      LOG.info("[gyf.reducer.key.increment.in.partition] "+ (keyCount-key_increment));
   }
 
   /**
@@ -168,6 +187,13 @@ public class Reducer<KEYIN,VALUEIN,KEYOUT,VALUEOUT> {
     setup(context);
     try {
       while (context.nextKey()) {
+        keyCount++;
+        if(enable_contention&&
+                (keyCount%conf.getInt("gyf.reduce.sleep.perMs",2000) == 0)&&
+                (isContention)){
+            Thread.sleep(sleep_ms);
+            LOG.info("[gyf.reducer.sleep]reduceTask "+reduceID+" now sleep for "+sleep_ms+" ms");
+        }
         reduce(context.getCurrentKey(), context.getValues(), context);
         // If a back up store is used, reset it
         Iterator<VALUEIN> iter = context.getValues().iterator();

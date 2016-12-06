@@ -1377,7 +1377,18 @@ public class JobConf extends Configuration {
    * @param n the number of reduce tasks for this job.
    */
   public void setNumReduceTasks(int n) { setInt(JobContext.NUM_REDUCES, n); }
-  
+  public void setNumReduceActualTasks(int n) { setInt(JobContext.NUM_ACTUAL_REDUCES,n);}
+
+  public int getNumReduceActualTasks() {
+
+    boolean gyf_solution = getBoolean("gyf.reduce.solution", false);
+    if (gyf_solution) {
+      return getInt(JobContext.NUM_ACTUAL_REDUCES, 1);
+    }
+    else{
+      return getNumReduceTasks();
+    }
+  }
   /** 
    * Get the configured number of maximum attempts that will be made to run a
    * map task, as specified by the <code>mapreduce.map.maxattempts</code>

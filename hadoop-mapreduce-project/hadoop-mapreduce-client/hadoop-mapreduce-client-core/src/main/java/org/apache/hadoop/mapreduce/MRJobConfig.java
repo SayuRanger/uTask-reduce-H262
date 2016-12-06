@@ -82,6 +82,8 @@ public interface MRJobConfig {
 
   public static final String NUM_REDUCES = "mapreduce.job.reduces";
 
+  public static final String NUM_ACTUAL_REDUCES = "mapreduce.job.actual_reduces";
+
   public static final String SKIP_RECORDS = "mapreduce.job.skiprecords";
 
   public static final String SKIP_OUTDIR = "mapreduce.job.skip.outdir";

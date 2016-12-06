@@ -106,6 +106,10 @@ public class LocalJobRunner implements ClientProtocol {
   }
 
   private class Job extends Thread implements TaskUmbilicalProtocol {
+    @Override
+    public ReduceProgressMessage RPMProcessing(ReduceProgressMessage request){
+      return null;
+    }
     // The job directory on the system: JobClient places job configurations here.
     // This is analogous to JobTracker's system directory.
     private Path systemJobDir;

@@ -50,6 +50,18 @@ public class ReduceTaskImpl extends TaskImpl {
     this.numMapTasks = numMapTasks;
   }
 
+  public ReduceTaskImpl(int actual_partition,JobId jobId, int partition,
+      EventHandler eventHandler, Path jobFile, JobConf conf,
+      int numMapTasks, TaskAttemptListener taskAttemptListener,
+      Token<JobTokenIdentifier> jobToken,
+      Credentials credentials, Clock clock,
+      int appAttemptId, MRAppMetrics metrics, AppContext appContext) {
+    super(actual_partition,jobId, TaskType.REDUCE, partition, eventHandler, jobFile, conf,
+        taskAttemptListener, jobToken, credentials, clock,
+        appAttemptId, metrics, appContext);
+    this.numMapTasks = numMapTasks;
+  }
+
   @Override
   protected int getMaxAttempts() {
     return conf.getInt(MRJobConfig.REDUCE_MAX_ATTEMPTS, 4);

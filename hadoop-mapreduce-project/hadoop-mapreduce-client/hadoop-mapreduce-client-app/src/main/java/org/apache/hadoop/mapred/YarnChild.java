@@ -154,6 +154,7 @@ class YarnChild {
       logSyncer = TaskLog.createLogSyncer();
 
       // Create a final reference to the task for the doAs block
+      LOG.info("ABCDEFG: "+System.currentTimeMillis());
       final Task taskFinal = task;
       childUGI.doAs(new PrivilegedExceptionAction<Object>() {
         @Override

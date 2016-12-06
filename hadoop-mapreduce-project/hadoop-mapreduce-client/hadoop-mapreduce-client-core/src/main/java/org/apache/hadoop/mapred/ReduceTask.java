@@ -75,6 +75,14 @@ public class ReduceTask extends Task {
 
   private CompressionCodec codec;
 
+  //Following variables are used to support uTask.
+  private int previousPartitionID;
+  private int newFileStartPartitionID;
+  private boolean isSort;
+  private int keyCount;
+  private int reduceID;
+  private boolean isContention;
+
   // If this is a LocalJobRunner-based job, this will
   // be a mapping from map task attempts to their output files.
   // This will be null in other cases.
@@ -318,16 +326,27 @@ public class ReduceTask extends Task {
   @SuppressWarnings("unchecked")
   public void run(JobConf job, final TaskUmbilicalProtocol umbilical)
     throws IOException, InterruptedException, ClassNotFoundException {
+    keyCount =0;
+    reduceID = getTaskID().getTaskID().getId();
+    run2(job,umbilical);
+  }
+
+  @SuppressWarnings("unchecked")
+  private <INKEY,INVALUE,OUTKEY,OUTVALUE>
+  void run2(JobConf job,final TaskUmbilicalProtocol umbilical)
+    throws IOException, InterruptedException,ClassNotFoundException{
     job.setBoolean(JobContext.SKIP_RECORDS, isSkipping());
 
     if (isMapOrReduce()) {
-      copyPhase = getProgress().addPhase("copy");
-      sortPhase  = getProgress().addPhase("sort");
-      reducePhase = getProgress().addPhase("reduce");
+      for(int i =0;i<job.getNumReduceTasks();i++) {
+        copyPhase = getProgress().addPhase("copy");
+        sortPhase = getProgress().addPhase("sort");
+        reducePhase = getProgress().addPhase("reduce");
+      }
     }
     // start thread that will handle communication with parent
     TaskReporter reporter = startReporter(umbilical);
-    
+
     boolean useNewApi = job.getUseNewReducer();
     initialize(job, getJobID(), reporter, useNewApi);
 
@@ -344,55 +363,200 @@ public class ReduceTask extends Task {
       runTaskCleanupTask(umbilical, reporter);
       return;
     }
-    
+
     // Initialize the codec
     codec = initCodec();
     RawKeyValueIterator rIter = null;
     ShuffleConsumerPlugin shuffleConsumerPlugin = null;
-    
+
     Class combinerClass = conf.getCombinerClass();
-    CombineOutputCollector combineCollector = 
-      (null != combinerClass) ? 
-     new CombineOutputCollector(reduceCombineOutputCounter, reporter, conf) : null;
+    CombineOutputCollector combineCollector =
+            (null != combinerClass) ?
+                    new CombineOutputCollector(reduceCombineOutputCounter, reporter, conf) : null;
 
     Class<? extends ShuffleConsumerPlugin> clazz =
-          job.getClass(MRConfig.SHUFFLE_CONSUMER_PLUGIN, Shuffle.class, ShuffleConsumerPlugin.class);
-					
+            job.getClass(MRConfig.SHUFFLE_CONSUMER_PLUGIN, Shuffle.class, ShuffleConsumerPlugin.class);
+
     shuffleConsumerPlugin = ReflectionUtils.newInstance(clazz, job);
     LOG.info("Using ShuffleConsumerPlugin: " + shuffleConsumerPlugin);
 
-    ShuffleConsumerPlugin.Context shuffleContext = 
-      new ShuffleConsumerPlugin.Context(getTaskID(), job, FileSystem.getLocal(job), umbilical, 
-                  super.lDirAlloc, reporter, codec, 
-                  combinerClass, combineCollector, 
-                  spilledRecordsCounter, reduceCombineInputCounter,
-                  shuffledMapsCounter,
-                  reduceShuffleBytes, failedShuffleCounter,
-                  mergedMapOutputsCounter,
-                  taskStatus, copyPhase, sortPhase, this,
-                  mapOutputFile, localMapFiles);
-    shuffleConsumerPlugin.init(shuffleContext);
+    boolean gyf_solution = getConf().getBoolean("gyf.reduce.solution",false);
+    isSort = getConf().getBoolean("gyf.reduce.isSort",false);
+    if(gyf_solution){
 
-    rIter = shuffleConsumerPlugin.run();
+      ReduceProgressMessage request = new ReduceProgressMessage("request");
+      request.setPartitionId(-1);
+      request.setReduceId(reduceID);
+      ReduceProgressMessage respond;
 
-    // free up the data structures
-    mapOutputFilesOnDisk.clear();
-    
-    sortPhase.complete();                         // sort is complete
-    setPhase(TaskStatus.Phase.REDUCE); 
-    statusUpdate(umbilical);
-    Class keyClass = job.getMapOutputKeyClass();
-    Class valueClass = job.getMapOutputValueClass();
-    RawComparator comparator = job.getOutputValueGroupingComparator();
+      long tt1 = System.currentTimeMillis();
+      respond = umbilical.RPMProcessing(request);
+      long tt2 = System.currentTimeMillis();
+      LOG.info("[gyf.solution.rpc.call.time]: "+ (tt2 - tt1));
 
-    if (useNewApi) {
-      runNewReducer(job, umbilical, reporter, rIter, comparator, 
-                    keyClass, valueClass);
-    } else {
-      runOldReducer(job, umbilical, reporter, rIter, comparator, 
-                    keyClass, valueClass);
+      //get start partition ID here.
+      newFileStartPartitionID = respond.getPartitionId();
+      previousPartitionID = -1;
+      int partitionID;
+
+      TaskID fTID = getTaskID().getTaskID();
+      TaskID firstOutputTaskID = new TaskID(fTID.getJobID(),fTID.getTaskType(),newFileStartPartitionID);
+      TaskAttemptID firstTAID = new TaskAttemptID(firstOutputTaskID,getTaskID().getId());
+
+      org.apache.hadoop.mapreduce.TaskAttemptContext taskContext1 =
+              new org.apache.hadoop.mapreduce.task.TaskAttemptContextImpl(job,firstTAID,reporter);
+
+      org.apache.hadoop.mapreduce.Reducer<INKEY,INVALUE,OUTKEY,OUTVALUE> reducer =
+              (org.apache.hadoop.mapreduce.Reducer<INKEY,INVALUE,OUTKEY,OUTVALUE>)
+                      ReflectionUtils.newInstance(taskContext1.getReducerClass(), job);
+
+      org.apache.hadoop.mapreduce.RecordWriter<OUTKEY,OUTVALUE> trackedRW =
+              new NewTrackingRecordWriter<OUTKEY, OUTVALUE>(this, taskContext1);
+
+      while(respond.getPartitionId()!=-1){
+        partitionID = respond.getPartitionId();
+
+        //get current partition ID here.
+        copyPhase = getProgress().addPhase("copy");
+        int outputLocation=0;
+        if(isSort){
+          if(previousPartitionID == -1){
+            outputLocation = newFileStartPartitionID;
+          }
+          else{
+            if(previousPartitionID==partitionID-1){ //successive
+              outputLocation = newFileStartPartitionID;
+            }
+            else{ //not successive
+              outputLocation = partitionID;
+              newFileStartPartitionID = partitionID;
+            }
+          }
+        }
+        else{
+          outputLocation = newFileStartPartitionID;
+        }
+        TaskID TID = getTaskID().getTaskID();
+        LOG.info("gyf.TID:"+TID);
+        TaskID newID = new TaskID(TID.getJobID(),TID.getTaskType(),partitionID);
+        LOG.info("gyf.newID:"+newID);
+        TaskAttemptID newAttempt = new TaskAttemptID(newID,0);
+        LOG.info("gyf.newAttempt"+newAttempt);
+        long sct1 = System.currentTimeMillis();
+        ShuffleConsumerPlugin.Context shuffleContext =
+                new ShuffleConsumerPlugin.Context(newAttempt,
+                        job, FileSystem.getLocal(job), umbilical,
+                        super.lDirAlloc, reporter, codec,
+                        combinerClass, combineCollector,
+                        spilledRecordsCounter, reduceCombineInputCounter,
+                        shuffledMapsCounter,
+                        reduceShuffleBytes, failedShuffleCounter,
+                        mergedMapOutputsCounter,
+                        taskStatus, copyPhase, sortPhase, this,
+                        mapOutputFile, localMapFiles);
+        long sct2 = System.currentTimeMillis();
+        LOG.info("[gyf.reduce.Shuffle.Context.Create.time]: " + (sct2-sct1) );
+
+        long sit1 = System.currentTimeMillis();
+        shuffleConsumerPlugin.init(shuffleContext);
+        long sit2 = System.currentTimeMillis();
+        LOG.info("[gyf.reduce.Shuffle.init.time]: " + (sit2 - sit1) );
+        //long srt1 = System.currentTimeMillis();
+
+        long srt1 = System.currentTimeMillis();
+        rIter = shuffleConsumerPlugin.run();
+        long srt2 = System.currentTimeMillis();
+        LOG.info("[gyf.reduce.Shuffle.run.time]: " + (srt2 - srt1) );
+        //long srt2 = System.currentTimeMillis();
+        //LOG.info("[gyf.solution.shuffle.run]: "+ (srt2 - srt1));
+        mapOutputFilesOnDisk.clear();
+
+        sortPhase.complete();                         // sort is complete
+        setPhase(TaskStatus.Phase.REDUCE);
+        statusUpdate(umbilical);
+        Class keyClass = job.getMapOutputKeyClass();
+        Class valueClass = job.getMapOutputValueClass();
+        RawComparator comparator = job.getOutputValueGroupingComparator();
+
+        if (useNewApi) {
+          isContention = (reduceID==1)?true:false;
+          long rnt1 = System.currentTimeMillis();
+          runNewReducer(job, umbilical, reporter, rIter, comparator,      //partitions output to different files according
+                  keyClass, valueClass,                                   //to newAttempt.
+                  newAttempt,isSort,taskContext1,reducer,trackedRW,isContention);
+          long rnt2 = System.currentTimeMillis();
+          LOG.info("[gyf.solution.run.NewReducer]: "+ (rnt2 - rnt1));
+          //runNewReducer(job, umbilical, reporter, rIter, comparator,    //all partition output to one file.
+          //        keyClass, valueClass);
+        } else {
+          runOldReducer(job, umbilical, reporter, rIter, comparator,
+                  keyClass, valueClass);
+        }
+        request.setPartitionId(partitionID);
+        previousPartitionID = partitionID;
+        long t1 = System.currentTimeMillis();
+        respond = umbilical.RPMProcessing(request);
+        long t2 = System.currentTimeMillis();
+        LOG.info("[gyf.solution.rpc.call.time]: "+ (t2 - t1));
+      }
+      if(isSort==false){
+        Class keyClass = job.getMapOutputKeyClass();
+        Class valueClass = job.getMapOutputValueClass();
+        RawComparator comparator = job.getOutputValueGroupingComparator();
+        org.apache.hadoop.mapreduce.Reducer.Context
+              reducerContext = createReduceContext(reducer, job, firstTAID,
+              rIter, reduceInputKeyCounter,
+              reduceInputValueCounter,
+              trackedRW,
+              committer,
+              reporter, comparator, keyClass,
+              valueClass);
+        long t1 =System.currentTimeMillis();
+        trackedRW.close(reducerContext);
+        long t2 = System.currentTimeMillis();
+        LOG.info("gyf.runNewReducer.trackedRW.close: " + (t2-t1) );
+      }
     }
+    else{
+      //run normal reduce.
+      ShuffleConsumerPlugin.Context shuffleContext =
+              new ShuffleConsumerPlugin.Context(getTaskID(), job, FileSystem.getLocal(job), umbilical,
+                      super.lDirAlloc, reporter, codec,
+                      combinerClass, combineCollector,
+                      spilledRecordsCounter, reduceCombineInputCounter,
+                      shuffledMapsCounter,
+                      reduceShuffleBytes, failedShuffleCounter,
+                      mergedMapOutputsCounter,
+                      taskStatus, copyPhase, sortPhase, this,
+                      mapOutputFile, localMapFiles);
+      shuffleConsumerPlugin.init(shuffleContext);
+      //LOG.info("shuffleConsumerPlugin starts to run.");
+      long srt1 = System.currentTimeMillis();
+      rIter = shuffleConsumerPlugin.run();
+      long srt2 = System.currentTimeMillis();
+      LOG.info("[gyf.reduce.Shuffle.run.time]: " + (srt2 - srt1) );
 
+      mapOutputFilesOnDisk.clear();
+
+      sortPhase.complete();                         // sort is complete
+      setPhase(TaskStatus.Phase.REDUCE);
+      statusUpdate(umbilical);
+      Class keyClass = job.getMapOutputKeyClass();
+      Class valueClass = job.getMapOutputValueClass();
+      RawComparator comparator = job.getOutputValueGroupingComparator();
+
+      if (useNewApi) {
+        isContention = (reduceID==1)&&(getTaskID().getId()==0)?true:false;
+        long rnt1 = System.currentTimeMillis();
+        runNewReducer(job, umbilical, reporter, rIter, comparator,
+                keyClass, valueClass,isContention);
+        long rnt2 = System.currentTimeMillis();
+        LOG.info("[gyf.solution.run.NewReducer]: "+ (rnt2 - rnt1));
+      } else {
+        runOldReducer(job, umbilical, reporter, rIter, comparator,
+                keyClass, valueClass);
+      }
+    }
     shuffleConsumerPlugin.close();
     done(umbilical, reporter);
   }
@@ -571,7 +735,98 @@ public class ReduceTask extends Task {
     }
   }
 
-  @SuppressWarnings("unchecked")
+    private <INKEY,INVALUE,OUTKEY,OUTVALUE>
+    void runNewReducer(JobConf job,
+                       final TaskUmbilicalProtocol umbilical,
+                       final TaskReporter reporter,
+                       RawKeyValueIterator rIter,
+                       RawComparator<INKEY> comparator,
+                       Class<INKEY> keyClass,
+                       Class<INVALUE> valueClass,TaskAttemptID newAttemptID,
+                       boolean isSort,
+                       org.apache.hadoop.mapreduce.TaskAttemptContext taskContext1,
+                       org.apache.hadoop.mapreduce.Reducer<INKEY,INVALUE,OUTKEY,OUTVALUE> reducer1,
+                       org.apache.hadoop.mapreduce.RecordWriter<OUTKEY,OUTVALUE> trackedRW1,
+                       boolean isContention
+    ) throws IOException,InterruptedException,
+            ClassNotFoundException {
+        // wrap value iterator to report progress.
+        final RawKeyValueIterator rawIter = rIter;
+        rIter = new RawKeyValueIterator() {
+            public void close() throws IOException {
+                rawIter.close();
+            }
+            public DataInputBuffer getKey() throws IOException {
+                return rawIter.getKey();
+            }
+            public Progress getProgress() {
+                return rawIter.getProgress();
+            }
+            public DataInputBuffer getValue() throws IOException {
+                return rawIter.getValue();
+            }
+            public boolean next() throws IOException {
+                boolean ret = rawIter.next();
+                //System.out.printf("rawIter.getProgress().getProgress:\n",rawIter.getProgress().getProgress());
+                reporter.setProgress(rawIter.getProgress().getProgress());
+                return ret;
+            }
+        };
+        // make a task context so we can get the classes
+        org.apache.hadoop.mapreduce.TaskAttemptContext taskContext = isSort?
+                new org.apache.hadoop.mapreduce.task.TaskAttemptContextImpl(job,
+                        newAttemptID, reporter):taskContext1;
+
+        // make a reducer
+
+        org.apache.hadoop.mapreduce.Reducer<INKEY,INVALUE,OUTKEY,OUTVALUE> reducer = isSort?
+                (org.apache.hadoop.mapreduce.Reducer<INKEY,INVALUE,OUTKEY,OUTVALUE>)
+                        ReflectionUtils.newInstance(taskContext.getReducerClass(), job):reducer1;
+
+        org.apache.hadoop.mapreduce.RecordWriter<OUTKEY,OUTVALUE> trackedRW = isSort?
+                new NewTrackingRecordWriter<OUTKEY, OUTVALUE>(this, taskContext):trackedRW1;
+
+
+        job.setBoolean("mapred.skip.on", isSkipping());
+        job.setBoolean(JobContext.SKIP_RECORDS, isSkipping());
+
+        org.apache.hadoop.mapreduce.Reducer.Context
+                reducerContext = createReduceContext(reducer, job, newAttemptID,
+                rIter, reduceInputKeyCounter,
+                reduceInputValueCounter,
+                trackedRW,
+                committer,
+                reporter, comparator, keyClass,
+                valueClass);
+        reducer.setReducerID(reduceID);
+        reducer.setContention(isContention);
+        if(isSort){
+          try {
+            reducer.setKeyCount(keyCount);
+            long rt1 = System.currentTimeMillis();
+            reducer.run(reducerContext);
+            long rt2 = System.currentTimeMillis();
+            LOG.info("gyf.reducer.run.time "+(rt2-rt1));
+            keyCount = reducer.getKeyCount();
+          } finally {
+            long clt1 = System.currentTimeMillis();
+            trackedRW.close(reducerContext);
+            long clt2 = System.currentTimeMillis();
+            LOG.info("gyf.runNewReducer.trackedRW.close "+ (clt2-clt1));
+          }
+        }
+        else{
+          reducer.setKeyCount(keyCount);
+          long rt1 = System.currentTimeMillis();
+          reducer.run(reducerContext);
+          long rt2 = System.currentTimeMillis();
+          LOG.info("gyf.reducer.run.time "+(rt2-rt1));
+          keyCount = reducer.getKeyCount();
+        }
+    }
+
+
+    @SuppressWarnings("unchecked")
   private <INKEY,INVALUE,OUTKEY,OUTVALUE>
   void runNewReducer(JobConf job,
                      final TaskUmbilicalProtocol umbilical,
@@ -579,7 +834,8 @@ public class ReduceTask extends Task {
                      RawKeyValueIterator rIter,
                      RawComparator<INKEY> comparator,
                      Class<INKEY> keyClass,
-                     Class<INVALUE> valueClass
+                     Class<INVALUE> valueClass,
+                     boolean contention
                      ) throws IOException,InterruptedException, 
                               ClassNotFoundException {
     // wrap value iterator to report progress.
@@ -599,6 +855,7 @@ public class ReduceTask extends Task {
       }
       public boolean next() throws IOException {
         boolean ret = rawIter.next();
+        //System.out.printf("rawIter.getProgress().getProgress:\n",rawIter.getProgress().getProgress());
         reporter.setProgress(rawIter.getProgress().getProgress());
         return ret;
       }
@@ -623,13 +880,20 @@ public class ReduceTask extends Task {
                                                committer,
                                                reporter, comparator, keyClass,
                                                valueClass);
+    reducer.setReducerID(reduceID);
+      reducer.setContention(contention);
     try {
+      reducer.setKeyCount(keyCount);
       reducer.run(reducerContext);
+      keyCount = reducer.getKeyCount();
     } finally {
+      long t1 = System.currentTimeMillis();
       trackedRW.close(reducerContext);
+      long t2 = System.currentTimeMillis();
+      LOG.info("gyf.runNewReducer.trackedRW.close: "+ (t2 - t1));
     }
   }
-  
+
   private <OUTKEY, OUTVALUE>
   void closeQuietly(RecordWriter<OUTKEY, OUTVALUE> c, Reporter r) {
     if (c != null) {

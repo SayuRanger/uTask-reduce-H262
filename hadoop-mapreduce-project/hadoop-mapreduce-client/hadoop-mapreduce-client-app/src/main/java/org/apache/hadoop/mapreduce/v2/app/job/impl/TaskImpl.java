@@ -290,6 +290,54 @@ public abstract class TaskImpl implements Task, EventHandler<TaskEvent> {
     }
   }
 
+  public TaskImpl(int actual_partition,JobId jobId, TaskType taskType, int partition,
+                  EventHandler eventHandler, Path remoteJobConfFile, JobConf conf,
+                  TaskAttemptListener taskAttemptListener,
+                  Token<JobTokenIdentifier> jobToken,
+                  Credentials credentials, Clock clock,
+                  int appAttemptId, MRAppMetrics metrics, AppContext appContext){
+
+    this.conf = conf;
+    this.clock = clock;
+    this.jobFile = remoteJobConfFile;
+    ReadWriteLock readWriteLock = new ReentrantReadWriteLock();
+    readLock = readWriteLock.readLock();
+    writeLock = readWriteLock.writeLock();
+    this.attempts = Collections.emptyMap();
+    this.finishedAttempts = new HashSet<TaskAttemptId>(2);
+    this.failedAttempts = new HashSet<TaskAttemptId>(2);
+    this.inProgressAttempts = new HashSet<TaskAttemptId>(2);
+    // This overridable method call is okay in a constructor because we
+    //  have a convention that none of the overrides depends on any
+    //  fields that need initialization.
+    maxAttempts = getMaxAttempts();
+    taskId = MRBuilderUtils.newTaskId(jobId, partition, taskType);
+    /**
+     *  The only difference is to assign partition with actual partition we set.
+     */
+    this.partition = actual_partition;
+    this.taskAttemptListener = taskAttemptListener;
+    this.eventHandler = eventHandler;
+    this.credentials = credentials;
+    this.jobToken = jobToken;
+    this.metrics = metrics;
+    this.appContext = appContext;
+    this.encryptedShuffle = conf.getBoolean(MRConfig.SHUFFLE_SSL_ENABLED_KEY,
+            MRConfig.SHUFFLE_SSL_ENABLED_DEFAULT);
+
+    // This "this leak" is okay because the retained pointer is in an
+    //  instance variable.
+    stateMachine = stateMachineFactory.make(this);
+
+    // All the new TaskAttemptIDs are generated based on MR
+    // ApplicationAttemptID so that attempts from previous lives don't
+    // over-step the current one. This assumes that a task won't have more
+    // than 1000 attempts in its single generation, which is very reasonable.
+    nextAttemptNumber = (appAttemptId - 1) * 1000;
+
+    //this.partition = actual_partition;
+  }
+
   public TaskImpl(JobId jobId, TaskType taskType, int partition,
       EventHandler eventHandler, Path remoteJobConfFile, JobConf conf,
       TaskAttemptListener taskAttemptListener,

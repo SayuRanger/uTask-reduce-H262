@@ -38,6 +38,7 @@ import org.apache.hadoop.mapreduce.MRJobConfig;
 import org.apache.hadoop.mapreduce.TypeConverter;
 import org.apache.hadoop.mapreduce.security.token.JobTokenSecretManager;
 import org.apache.hadoop.mapreduce.v2.app.AppContext;
+import org.apache.hadoop.mapreduce.v2.app.MRAppMaster;
 import org.apache.hadoop.mapreduce.v2.app.TaskAttemptListener;
 import org.apache.hadoop.mapreduce.v2.app.TaskHeartbeatHandler;
 import org.apache.hadoop.mapreduce.v2.app.job.Job;
@@ -66,6 +67,16 @@ import org.apache.hadoop.yarn.exceptions.YarnRuntimeException;
 @SuppressWarnings({"unchecked"})
 public class TaskAttemptListenerImpl extends CompositeService 
     implements TaskUmbilicalProtocol, TaskAttemptListener {
+
+  //add MRAppMaster
+  private MRAppMaster main;
+  public void set_mrappmaster(MRAppMaster app){this.main = app;}
+
+  public int intCall(ReduceProgressMessage request){System.out.printf("%s\nHello      World!\n",request.getType());return 1;}
+  public int intCall(int i){System.out.printf("%d\nHello      World!\n",i);return 1;}
+  public ReduceProgressMessage RPMProcessing(ReduceProgressMessage request){
+    return main.RPMProcessing(request);
+  }
 
   private static final JvmTask TASK_FOR_INVALID_JVM = new JvmTask(null, true);
 

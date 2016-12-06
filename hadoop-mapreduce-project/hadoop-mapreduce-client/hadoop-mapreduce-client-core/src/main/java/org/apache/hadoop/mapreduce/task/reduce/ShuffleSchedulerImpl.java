@@ -86,7 +86,7 @@ public class ShuffleSchedulerImpl<K,V> implements ShuffleScheduler<K,V> {
   private final TaskStatus status;
   private final ExceptionReporter reporter;
   private final int abortFailureLimit;
-  private final Progress progress;
+  public final Progress progress;
   private final Counters.Counter shuffledMapsCounter;
   private final Counters.Counter reduceShuffleBytes;
   private final Counters.Counter failedShuffleCounter;

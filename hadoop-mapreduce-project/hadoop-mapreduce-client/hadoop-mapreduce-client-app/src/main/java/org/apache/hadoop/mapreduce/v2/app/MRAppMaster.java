@@ -41,6 +41,7 @@ import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FSDataInputStream;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
+import org.apache.hadoop.mapred.*;
 import org.apache.hadoop.mapred.FileOutputCommitter;
 import org.apache.hadoop.mapred.JobConf;
 import org.apache.hadoop.mapred.LocalContainerLauncher;
@@ -703,6 +704,7 @@ public class MRAppMaster extends CompositeService {
     TaskAttemptListener lis =
         new TaskAttemptListenerImpl(context, jobTokenSecretManager,
             getRMHeartbeatHandler());
+    ((TaskAttemptListenerImpl)lis).set_mrappmaster(this);
     return lis;
   }
 
@@ -1417,7 +1419,11 @@ public class MRAppMaster extends CompositeService {
         new MRAppMasterShutdownHook(appMaster), SHUTDOWN_HOOK_PRIORITY);
       JobConf conf = new JobConf(new YarnConfiguration());
       conf.addResource(new Path(MRJobConfig.JOB_CONF_FILE));
-      
+
+      //add switch to enable reduce solution.
+      appMaster.gyf_solution_enable = conf.getBoolean("gyf.reduce.solution",false);
+      if(appMaster.gyf_solution_enable) appMaster.initReduceProgressTable();
+
       MRWebAppUtil.initialize(conf);
       String jobUserName = System
           .getenv(ApplicationConstants.Environment.USER.name());
@@ -1433,6 +1439,42 @@ public class MRAppMaster extends CompositeService {
     }
   }
 
+  //add reduce process table to monitor the progress of job in reduce.
+  private ReduceProgressTable rpTable;
+
+  private void initReduceProgressTable(){
+    Configuration conf = new Configuration();
+    int actual = conf.getInt("mapreduce.job.actual_reduces",0);
+    if(actual == 0){
+      LOG.info("Error: mapreduce.job.actual_reduces == 0");
+      sysexit();
+    }
+    int numPartition = conf.getInt("gyf.partition.num",0);
+    if(numPartition==0){
+      LOG.info("Error:mapreduce.job.reduces == 0");
+      sysexit();
+    }
+    rpTable = new ReduceProgressTable(actual,numPartition);
+    return;
+  }
+
+  public ReduceProgressMessage RPMProcessing(ReduceProgressMessage msg){
+    ReduceProgressMessage respond = new ReduceProgressMessage("respond");
+    int reduceID = msg.getReduceId();
+    int partitionID = msg.getPartitionId();
+    if(msg.getType()=="request"){
+      if(msg.getPartitionId()!=-1){
+        rpTable.markFinished(partitionID);
+      }
+      int nextPartition = rpTable.nextGlobalPartitionId(reduceID);
+      respond.setPartitionId(nextPartition);
+      respond.setReduceId(reduceID);
+      LOG.info("[ReduceProgressTable by Gyf] in Reduce#"+reduceID+" request is "+msg+", response is "+respond);
+    }
+    return respond;
+  }
+
+  private boolean gyf_solution_enable=false;
   // The shutdown hook that runs when a signal is received AND during normal
   // close of the JVM.
   static class MRAppMasterShutdownHook implements Runnable {

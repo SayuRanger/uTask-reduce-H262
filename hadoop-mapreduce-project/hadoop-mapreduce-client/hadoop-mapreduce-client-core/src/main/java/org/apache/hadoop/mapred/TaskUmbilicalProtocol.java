@@ -36,7 +36,10 @@ import org.apache.hadoop.security.token.TokenInfo;
 @InterfaceStability.Stable
 public interface TaskUmbilicalProtocol extends VersionedProtocol {
 
-  /** 
+  public ReduceProgressMessage RPMProcessing(ReduceProgressMessage request);
+  //public int intCall(ReduceProgressMessage request);
+  //public int intCall(int i);
+  /**
    * Changed the version to 2, since we have a new method getMapOutputs 
    * Changed version to 3 to have progress() return a boolean
    * Changed the version to 4, since we have replaced 

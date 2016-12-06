@@ -493,6 +493,8 @@ class Fetcher<K,V> extends Thread {
         return remaining.toArray(new TaskAttemptID[remaining.size()]);
       }
 
+      LOG.info("gyf.decompressedLength is "+decompressedLength);
+
       InputStream is = input;
       is = CryptoUtils.wrapIfNecessary(jobConf, is, compressedLength);
       compressedLength -= CryptoUtils.cryptoPadding(jobConf);

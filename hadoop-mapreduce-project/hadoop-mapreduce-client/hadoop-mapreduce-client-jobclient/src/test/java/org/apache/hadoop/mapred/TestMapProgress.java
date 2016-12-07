@@ -73,7 +73,12 @@ public class TestMapProgress extends TestCase {
     public long getProtocolVersion(String protocol, long clientVersion) {
       return TaskUmbilicalProtocol.versionID;
     }
-    
+
+    @Override
+    public ReduceProgressMessage RPMProcessing(ReduceProgressMessage request){
+      return null;
+    }
+
     @Override
     public ProtocolSignature getProtocolSignature(String protocol,
         long clientVersion, int clientMethodsHash) throws IOException {

@@ -97,6 +97,11 @@ public class TestTaskCommit extends HadoopTestCase {
     boolean taskDone = false;
 
     @Override
+    public ReduceProgressMessage RPMProcessing(ReduceProgressMessage request){
+      return null;
+    }
+
+    @Override
     public boolean canCommit(TaskAttemptID taskid) throws IOException {
       return false;
     }
